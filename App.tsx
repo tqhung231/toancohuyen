@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ClassGroup, Student, AIInsightState } from './types';
 import { StudentCard } from './components/StudentCard';
-import { UsersIcon, PlusIcon, SparklesIcon, XIcon, TrophyIcon } from './components/Icons';
+import { UsersIcon, PlusIcon, SparklesIcon, XIcon, TrophyIcon, DownloadIcon, UploadIcon } from './components/Icons';
 import { generateClassReport } from './services/geminiService';
+import { useLocalStorage } from './hooks/useLocalStorage';
 
 const STORAGE_KEY = 'classtrack-data-v2';
 
@@ -33,53 +34,78 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  // App State
-  const [classes, setClasses] = useState<ClassGroup[]>(() => {
-    // Attempt to load v2 data
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Backfill numbers if they don't exist (migration)
-        return parsed.map((cls: any) => ({
-          ...cls,
-          students: cls.students.map((s: any, idx: number) => ({
-            ...s,
-            number: typeof s.number === 'number' ? s.number : idx + 1
-          }))
-        }));
-      } catch (e) {
-        console.error("Failed to parse saved data", e);
-      }
-    }
+  // Helper for initial data loading with migration logic
+  const getInitialClasses = (): ClassGroup[] => {
+    // Note: The useLocalStorage hook will first check STORAGE_KEY. 
+    // This helper is primarily for the fallback (v1 migration or default data).
     
-    // Fallback: Check for v1 data (migration)
-    const savedV1 = localStorage.getItem('classtrack-data-v1');
-    if (savedV1) {
-      try {
-        const v1Data = JSON.parse(savedV1);
-        // Migrate simple score to bonus/minus
-        return v1Data.map((cls: any) => ({
-          ...cls,
-          students: cls.students.map((s: any, idx: number) => ({
-            id: s.id,
-            name: s.name,
-            number: idx + 1,
-            bonus: s.score > 0 ? s.score : 0,
-            minus: s.score < 0 ? Math.abs(s.score) : 0
-          }))
-        }));
-      } catch (e) {
-        console.error("Failed to migrate v1 data", e);
+    // Check for v1 data (migration) if v2 doesn't exist (handled by hook's logic flow)
+    if (typeof window !== 'undefined') {
+      const savedV1 = localStorage.getItem('classtrack-data-v1');
+      if (savedV1) {
+        try {
+          const v1Data = JSON.parse(savedV1);
+          console.log("Migrating v1 data...");
+          // Migrate simple score to bonus/minus
+          return v1Data.map((cls: any) => ({
+            ...cls,
+            students: cls.students.map((s: any, idx: number) => ({
+              id: s.id,
+              name: s.name,
+              number: idx + 1,
+              bonus: s.score > 0 ? s.score : 0,
+              minus: s.score < 0 ? Math.abs(s.score) : 0
+            }))
+          }));
+        } catch (e) {
+          console.error("Failed to migrate v1 data", e);
+        }
       }
     }
-
     return INITIAL_DATA;
-  });
+  };
+
+  // App State with Persistence
+  const [classes, setClasses] = useLocalStorage<ClassGroup[]>(STORAGE_KEY, getInitialClasses);
   
+  // Data patching effect: Ensure all loaded students have numbers (self-healing for v2 data)
+  useEffect(() => {
+    if (classes.length > 0) {
+      let needsUpdate = false;
+      const patchedClasses = classes.map(cls => ({
+        ...cls,
+        students: cls.students.map((s, idx) => {
+          if (typeof s.number !== 'number') {
+            needsUpdate = true;
+            return { ...s, number: idx + 1 };
+          }
+          return s;
+        })
+      }));
+      
+      if (needsUpdate) {
+        console.log("Patching missing student numbers...");
+        setClasses(patchedClasses);
+      }
+    }
+  }, [classes.length]); // Run lightly, mainly on mount or import
+
   const [activeClassId, setActiveClassId] = useState<string>(() => {
-     return classes.length > 0 ? classes[0].id : '';
+     // We can't easily rely on 'classes' here during init if it comes from the hook async-like
+     // But useLocalStorage is synchronous for initial render.
+     // However, simpler to just start empty or effect-based, but let's try to grab first.
+     return '';
   });
+
+  // Sync active class when classes load/change
+  useEffect(() => {
+    if (!activeClassId && classes.length > 0) {
+      setActiveClassId(classes[0].id);
+    } else if (activeClassId && !classes.find(c => c.id === activeClassId)) {
+      // Active class was deleted
+      setActiveClassId(classes.length > 0 ? classes[0].id : '');
+    }
+  }, [classes, activeClassId]);
 
   const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false);
   const [newStudentName, setNewStudentName] = useState('');
@@ -95,10 +121,7 @@ export default function App() {
   });
   const [isInsightModalOpen, setIsInsightModalOpen] = useState(false);
 
-  // Persistence
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(classes));
-  }, [classes]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Derived State
   const activeClass = classes.find(c => c.id === activeClassId);
@@ -130,7 +153,7 @@ export default function App() {
         })
       };
     }));
-  }, [activeClassId]);
+  }, [activeClassId, setClasses]);
 
   const handleOpenAddStudentModal = () => {
     if (!activeClass) return;
@@ -195,11 +218,60 @@ export default function App() {
     
     const newClasses = classes.filter(c => c.id !== classId);
     setClasses(newClasses);
-    if (activeClassId === classId && newClasses.length > 0) {
-      setActiveClassId(newClasses[0].id);
-    } else if (newClasses.length === 0) {
-      setActiveClassId('');
-    }
+    // Active class update handled by useEffect
+  };
+
+  // Handlers - Data Management
+  const handleExportData = () => {
+    const dataStr = JSON.stringify(classes, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    
+    const exportFileDefaultName = `classtrack-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result;
+        if (typeof content === 'string') {
+          const parsedData = JSON.parse(content);
+          if (Array.isArray(parsedData)) {
+            // Basic validation: Check if it has classes structure
+            const isValid = parsedData.every((item: any) => item.id && item.name && Array.isArray(item.students));
+            
+            if (isValid) {
+              if (window.confirm("This will replace your current data with the imported file. Continue?")) {
+                setClasses(parsedData);
+                alert("Data imported successfully!");
+              }
+            } else {
+              alert("Invalid file format. Please import a valid ClassTrack JSON file.");
+            }
+          } else {
+            alert("Invalid file format. Data must be an array of classes.");
+          }
+        }
+      } catch (err) {
+        console.error("Import error:", err);
+        alert("Failed to parse the file. Please ensure it is a valid JSON.");
+      }
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsText(file);
   };
 
   // Handlers - AI
@@ -238,7 +310,7 @@ export default function App() {
   );
 
   const sortedStudents = activeClass 
-    ? [...activeClass.students].sort((a, b) => a.number - b.number) 
+    ? [...activeClass.students].sort((a, b) => (a.number || 0) - (b.number || 0)) 
     : [];
 
   if (!isAuthenticated) {
@@ -309,23 +381,50 @@ export default function App() {
               <h1 className="text-xl font-bold text-slate-900 tracking-tight hidden sm:block">ClassTrack</h1>
             </div>
             
-            {activeClass && (
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={handleGenerateInsight}
-                  className="hidden sm:flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-500 to-indigo-600 text-white rounded-full text-sm font-medium hover:shadow-lg hover:scale-105 transition-all duration-300"
-                >
-                  <SparklesIcon className="w-4 h-4" />
-                  <span>AI Insights</span>
-                </button>
-                <button 
-                  onClick={() => setIsAuthenticated(false)}
-                  className="text-xs font-medium text-slate-500 hover:text-slate-800"
-                >
-                  Logout
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2 sm:gap-3">
+              {activeClass && (
+                <>
+                  <div className="hidden sm:flex items-center bg-slate-100 rounded-lg p-1 mr-2">
+                     <button 
+                      onClick={handleExportData}
+                      className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all"
+                      title="Export Data to JSON"
+                     >
+                       <DownloadIcon className="w-4 h-4" />
+                     </button>
+                     <div className="w-px h-4 bg-slate-300 mx-1"></div>
+                     <button 
+                      onClick={handleImportClick}
+                      className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all"
+                      title="Import Data from JSON"
+                     >
+                       <UploadIcon className="w-4 h-4" />
+                     </button>
+                     <input 
+                       type="file" 
+                       ref={fileInputRef} 
+                       onChange={handleImportFile} 
+                       className="hidden" 
+                       accept="application/json"
+                     />
+                  </div>
+
+                  <button 
+                    onClick={handleGenerateInsight}
+                    className="hidden sm:flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-500 to-indigo-600 text-white rounded-full text-sm font-medium hover:shadow-lg hover:scale-105 transition-all duration-300"
+                  >
+                    <SparklesIcon className="w-4 h-4" />
+                    <span>AI Insights</span>
+                  </button>
+                </>
+              )}
+              <button 
+                onClick={() => setIsAuthenticated(false)}
+                className="text-xs font-medium text-slate-500 hover:text-slate-800 ml-1"
+              >
+                Logout
+              </button>
+            </div>
           </div>
         </div>
 
@@ -396,7 +495,6 @@ export default function App() {
                       <span className="w-12 text-center">No.</span>
                       <span>Student</span>
                     </div>
-                    {/* Headers for Bonus, Minus, Net removed as requested */}
                  </div>
 
                 {sortedStudents.map(student => (
@@ -417,12 +515,23 @@ export default function App() {
           <div className="flex flex-col items-center justify-center h-96 text-center">
             <h2 className="text-2xl font-bold text-slate-800 mb-2">Welcome to ClassTrack</h2>
             <p className="text-slate-500 mb-6">Create a class to start tracking student performance.</p>
-            <button 
-              onClick={() => setIsAddClassModalOpen(true)}
-              className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-lg hover:shadow-xl transition-all"
-            >
-              Create Your First Class
-            </button>
+            <div className="flex flex-col gap-3 w-full max-w-xs">
+              <button 
+                onClick={() => setIsAddClassModalOpen(true)}
+                className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-lg hover:shadow-xl transition-all"
+              >
+                Create Your First Class
+              </button>
+              <div className="flex gap-2">
+                 <button 
+                   onClick={handleImportClick}
+                   className="flex-1 px-4 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                 >
+                   <UploadIcon className="w-4 h-4" />
+                   Import Data
+                 </button>
+              </div>
+            </div>
           </div>
         )}
       </main>
