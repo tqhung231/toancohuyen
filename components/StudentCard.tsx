@@ -42,7 +42,7 @@ export const StudentCard: React.FC<StudentCardProps> = ({
           <div className="flex items-center bg-white rounded-lg border border-emerald-400 overflow-hidden">
             <button
               onClick={() => onUpdateBonus(student.id, -1)}
-              className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 active:bg-emerald-100 transition-colors border-r border-emerald-100"
+              className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 active:bg-emerald-100 transition-colors"
               disabled={student.bonus <= 0}
             >
               <MinusIcon className="w-5 h-5" />
@@ -52,7 +52,7 @@ export const StudentCard: React.FC<StudentCardProps> = ({
             </div>
             <button
               onClick={() => onUpdateBonus(student.id, 1)}
-              className="w-10 h-10 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 transition-colors border-l border-emerald-100"
+              className="w-10 h-10 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 transition-colors"
             >
               <PlusIcon className="w-5 h-5" />
             </button>
@@ -64,7 +64,7 @@ export const StudentCard: React.FC<StudentCardProps> = ({
           <div className="flex items-center bg-white rounded-lg border border-rose-400 overflow-hidden">
             <button
               onClick={() => onUpdateMinus(student.id, -1)}
-              className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-600 active:bg-rose-100 transition-colors border-r border-rose-100"
+              className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-600 active:bg-rose-100 transition-colors"
               disabled={student.minus <= 0}
             >
               <MinusIcon className="w-5 h-5" />
@@ -74,7 +74,7 @@ export const StudentCard: React.FC<StudentCardProps> = ({
             </div>
             <button
               onClick={() => onUpdateMinus(student.id, 1)}
-              className="w-10 h-10 flex items-center justify-center text-rose-600 hover:bg-rose-50 active:bg-rose-100 transition-colors border-l border-rose-100"
+              className="w-10 h-10 flex items-center justify-center text-rose-600 hover:bg-rose-50 active:bg-rose-100 transition-colors"
             >
               <PlusIcon className="w-5 h-5" />
             </button>
