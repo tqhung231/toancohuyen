@@ -490,18 +490,13 @@ export default function App() {
             {sortedStudents.length > 0 ? (
               <div className="flex flex-col gap-3">
                  {/* List Header (Hidden on mobile) */}
-                 <div className="hidden md:flex px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider items-center gap-4">
-                    <div className="flex-1 flex items-center gap-4">
-                      <span className="w-12 text-center">No.</span>
-                      <span>Student</span>
-                    </div>
-                    
-                    <div className="flex items-center gap-6">
-                      <span className="w-[138px] text-center">Bonus</span>
-                      <span className="w-[138px] text-center">Minus</span>
-                      <span className="w-24 pl-4 text-center">Total</span>
-                    </div>
-                    <div className="w-9"></div> {/* Spacer for delete action */}
+                 <div className="hidden md:grid grid-cols-[72px_minmax(0,1fr)_168px_168px_110px_44px] px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider items-center">
+                    <span className="text-center">No.</span>
+                    <span className="text-left">Student</span>
+                    <span className="text-center">Bonus</span>
+                    <span className="text-center">Minus</span>
+                    <span className="text-center">Total</span>
+                    <span className="text-right">Actions</span>
                  </div>
 
                 {sortedStudents.map(student => (
