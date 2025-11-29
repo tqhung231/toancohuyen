@@ -20,7 +20,7 @@ export const StudentCard: React.FC<StudentCardProps> = ({
   const isNegative = netScore < 0;
 
   return (
-    <div className="group bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col md:flex-row items-center gap-4 transition-all duration-200 hover:shadow-md hover:border-indigo-200">
+    <div className="group bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col md:flex-row items-center gap-4 transition-all duration-200 hover:shadow-md hover:border-indigo-100">
       
       {/* Student Info */}
       <div className="flex items-center gap-4 flex-1 w-full md:w-auto">
@@ -39,20 +39,20 @@ export const StudentCard: React.FC<StudentCardProps> = ({
         
         {/* Bonus Controls */}
         <div className="flex flex-col items-center">
-          <div className="flex items-center bg-white rounded-md shadow-sm border border-slate-200 overflow-hidden">
+          <div className="flex items-center bg-white rounded-lg border border-emerald-400 overflow-hidden">
             <button
               onClick={() => onUpdateBonus(student.id, -1)}
-              className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-slate-50 hover:text-slate-600 active:bg-slate-100 transition-colors"
+              className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 active:bg-emerald-100 transition-colors border-r border-emerald-100"
               disabled={student.bonus <= 0}
             >
               <MinusIcon className="w-5 h-5" />
             </button>
-            <div className="w-14 text-center font-bold text-slate-700 text-2xl">
+            <div className="w-16 text-center font-bold text-emerald-700 text-2xl tabular-nums">
               {student.bonus}
             </div>
             <button
               onClick={() => onUpdateBonus(student.id, 1)}
-              className="w-10 h-10 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 transition-colors"
+              className="w-10 h-10 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 transition-colors border-l border-emerald-100"
             >
               <PlusIcon className="w-5 h-5" />
             </button>
@@ -61,20 +61,20 @@ export const StudentCard: React.FC<StudentCardProps> = ({
 
         {/* Minus Controls */}
         <div className="flex flex-col items-center">
-          <div className="flex items-center bg-white rounded-md shadow-sm border border-slate-200 overflow-hidden">
+          <div className="flex items-center bg-white rounded-lg border border-rose-400 overflow-hidden">
             <button
               onClick={() => onUpdateMinus(student.id, -1)}
-              className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-slate-50 hover:text-slate-600 active:bg-slate-100 transition-colors"
+              className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-600 active:bg-rose-100 transition-colors border-r border-rose-100"
               disabled={student.minus <= 0}
             >
               <MinusIcon className="w-5 h-5" />
             </button>
-            <div className="w-14 text-center font-bold text-slate-700 text-2xl">
+            <div className="w-16 text-center font-bold text-rose-700 text-2xl tabular-nums">
               {student.minus}
             </div>
             <button
               onClick={() => onUpdateMinus(student.id, 1)}
-              className="w-10 h-10 flex items-center justify-center text-rose-600 hover:bg-rose-50 active:bg-rose-100 transition-colors"
+              className="w-10 h-10 flex items-center justify-center text-rose-600 hover:bg-rose-50 active:bg-rose-100 transition-colors border-l border-rose-100"
             >
               <PlusIcon className="w-5 h-5" />
             </button>
@@ -83,7 +83,7 @@ export const StudentCard: React.FC<StudentCardProps> = ({
 
         {/* Total Score */}
         <div className="flex flex-col items-center px-4 border-l border-slate-200 ml-2">
-          <span className={`text-3xl font-bold ${
+          <span className={`text-3xl font-bold tabular-nums ${
             isPositive ? 'text-emerald-600' : 
             isNegative ? 'text-rose-600' : 'text-slate-600'
           }`}>
