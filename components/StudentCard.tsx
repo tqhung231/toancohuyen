@@ -24,8 +24,8 @@ export const StudentCard: React.FC<StudentCardProps> = ({
       
       {/* Student Info */}
       <div className="flex items-center gap-4 flex-1 w-full md:w-auto">
-        <div className="flex items-center justify-center w-12 h-10 shrink-0 text-xl font-bold text-slate-300">
-          #{student.number}
+        <div className="flex items-center justify-center w-12 h-10 shrink-0 text-xl font-bold text-slate-300 tabular-nums">
+          {student.number}
         </div>
         <div className="min-w-0">
           <h3 className="text-base font-semibold text-slate-800 truncate" title={student.name}>
