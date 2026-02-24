@@ -3,7 +3,6 @@ import { ClassGroup, Student, AIInsightState } from './types';
 import { StudentCard } from './components/StudentCard';
 import { UsersIcon, PlusIcon, SparklesIcon, XIcon, TrophyIcon, DownloadIcon, UploadIcon } from './components/Icons';
 import { generateClassReport } from './services/geminiService';
-import { useLocalStorage } from './hooks/useLocalStorage';
 import {
   addClassToSupabase,
   addStudentToSupabase,
@@ -14,28 +13,7 @@ import {
   updateStudentMetricInSupabase
 } from './services/classDataService';
 
-const STORAGE_KEY = 'classtrack-data-v2';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const INITIAL_DATA: ClassGroup[] = [
-  {
-    id: 'class-1',
-    name: 'Class 1A',
-    students: [
-      { id: 's1', number: 1, name: 'Alice Johnson', bonus: 5, minus: 0 },
-      { id: 's2', number: 2, name: 'Bob Smith', bonus: 2, minus: 4 },
-      { id: 's3', number: 3, name: 'Charlie Davis', bonus: 8, minus: 1 },
-    ],
-  },
-  {
-    id: 'class-2',
-    name: 'Science 101',
-    students: [
-      { id: 's4', number: 1, name: 'Dana Lee', bonus: 1, minus: 1 },
-      { id: 's5', number: 2, name: 'Evan Wright', bonus: 3, minus: 0 },
-    ],
-  }
-];
 
 const ensureUuid = (value: unknown): string => {
   if (typeof value === 'string' && UUID_PATTERN.test(value)) {
@@ -75,8 +53,6 @@ const getErrorMessage = (error: unknown): string => {
   return 'Unknown error';
 };
 
-const areClassesEqual = (a: ClassGroup[], b: ClassGroup[]): boolean => JSON.stringify(a) === JSON.stringify(b);
-
 export default function App() {
   // Login State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -85,42 +61,15 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [isCloudSyncing, setIsCloudSyncing] = useState(true);
   const [cloudError, setCloudError] = useState<string | null>(null);
-
-  // Helper for initial data loading with migration logic
-  const getInitialClasses = (): ClassGroup[] => {
-    // Note: The useLocalStorage hook will first check STORAGE_KEY. 
-    // This helper is primarily for the fallback (v1 migration or default data).
-    
-    // Check for v1 data (migration) if v2 doesn't exist (handled by hook's logic flow)
-    if (typeof window !== 'undefined') {
-      const savedV1 = localStorage.getItem('classtrack-data-v1');
-      if (savedV1) {
-        try {
-          const v1Data = JSON.parse(savedV1);
-          console.log("Migrating v1 data...");
-          // Migrate simple score to bonus/minus
-          return normalizeClasses(v1Data.map((cls: any) => ({
-            ...cls,
-            students: cls.students.map((s: any, idx: number) => ({
-              id: s.id,
-              name: s.name,
-              number: idx + 1,
-              bonus: s.score > 0 ? s.score : 0,
-              minus: s.score < 0 ? Math.abs(s.score) : 0
-            }))
-          })));
-        } catch (e) {
-          console.error("Failed to migrate v1 data", e);
-        }
-      }
-    }
-    return normalizeClasses(INITIAL_DATA);
-  };
-
-  // App State with Persistence
-  const [classes, setClasses] = useLocalStorage<ClassGroup[]>(STORAGE_KEY, getInitialClasses);
+  const [classes, setClasses] = useState<ClassGroup[]>([]);
+  const hasBootstrappedCloud = useRef(false);
 
   useEffect(() => {
+    if (hasBootstrappedCloud.current) {
+      return;
+    }
+    hasBootstrappedCloud.current = true;
+
     let cancelled = false;
 
     const bootstrapCloudData = async () => {
@@ -128,20 +77,9 @@ export default function App() {
       setCloudError(null);
 
       try {
-        const localClasses = normalizeClasses(classes);
-        if (!areClassesEqual(localClasses, classes)) {
-          setClasses(localClasses);
-        }
-
         const cloudClasses = normalizeClasses(await fetchClassesFromSupabase());
         if (cancelled) return;
-
-        if (cloudClasses.length > 0) {
-          setClasses(cloudClasses);
-        } else if (localClasses.length > 0) {
-          await replaceAllDataInSupabase(localClasses);
-          setClasses(localClasses);
-        }
+        setClasses(cloudClasses);
       } catch (error) {
         if (!cancelled) {
           const message = getErrorMessage(error);
@@ -162,12 +100,7 @@ export default function App() {
     };
   }, []);
 
-  const [activeClassId, setActiveClassId] = useState<string>(() => {
-     // We can't easily rely on 'classes' here during init if it comes from the hook async-like
-     // But useLocalStorage is synchronous for initial render.
-     // However, simpler to just start empty or effect-based, but let's try to grab first.
-     return '';
-  });
+  const [activeClassId, setActiveClassId] = useState<string>('');
 
   // Sync active class when classes load/change
   useEffect(() => {
@@ -371,7 +304,7 @@ export default function App() {
           const parsedData = JSON.parse(content);
           if (Array.isArray(parsedData)) {
             // Basic validation: Check if it has classes structure
-            const isValid = parsedData.every((item: any) => item.id && item.name && Array.isArray(item.students));
+            const isValid = parsedData.every((item: any) => item && item.name && Array.isArray(item.students));
             
             if (isValid) {
               if (window.confirm("This will replace your current data with the imported file. Continue?")) {
