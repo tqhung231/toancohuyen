@@ -1,0 +1,56 @@
+[
+  {
+    "id": "class-1",
+    "name": "Class 1A",
+    "students": [
+      {
+        "id": "s1",
+        "name": "Alice Johnson",
+        "bonus": 5,
+        "minus": 0,
+        "number": 1
+      },
+      {
+        "id": "s2",
+        "name": "Bob Smith",
+        "bonus": 2,
+        "minus": 5,
+        "number": 2
+      },
+      {
+        "id": "s3",
+        "name": "Charlie Davis",
+        "bonus": 8,
+        "minus": 1,
+        "number": 3
+      },
+      {
+        "id": "eb60733a-5fdd-421c-bfcc-bb3d271f7234",
+        "name": "ABC",
+        "bonus": 0,
+        "minus": 0,
+        "number": 4
+      }
+    ]
+  },
+  {
+    "id": "class-2",
+    "name": "Science 101",
+    "students": [
+      {
+        "id": "s4",
+        "name": "Dana Lee",
+        "bonus": 1,
+        "minus": 1,
+        "number": 1
+      },
+      {
+        "id": "s5",
+        "name": "Evan Wright",
+        "bonus": 3,
+        "minus": 0,
+        "number": 2
+      }
+    ]
+  }
+]
