@@ -4,8 +4,18 @@ import { StudentCard } from './components/StudentCard';
 import { UsersIcon, PlusIcon, SparklesIcon, XIcon, TrophyIcon, DownloadIcon, UploadIcon } from './components/Icons';
 import { generateClassReport } from './services/geminiService';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import {
+  addClassToSupabase,
+  addStudentToSupabase,
+  deleteClassFromSupabase,
+  deleteStudentFromSupabase,
+  fetchClassesFromSupabase,
+  replaceAllDataInSupabase,
+  updateStudentMetricInSupabase
+} from './services/classDataService';
 
 const STORAGE_KEY = 'classtrack-data-v2';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const INITIAL_DATA: ClassGroup[] = [
   {
@@ -27,12 +37,54 @@ const INITIAL_DATA: ClassGroup[] = [
   }
 ];
 
+const ensureUuid = (value: unknown): string => {
+  if (typeof value === 'string' && UUID_PATTERN.test(value)) {
+    return value;
+  }
+  return crypto.randomUUID();
+};
+
+const normalizeClasses = (input: ClassGroup[]): ClassGroup[] => {
+  return input.map((cls, clsIndex) => ({
+    id: ensureUuid(cls.id),
+    name: cls.name?.trim() || `Class ${clsIndex + 1}`,
+    students: Array.isArray(cls.students)
+      ? cls.students.map((student, index) => ({
+          id: ensureUuid(student.id),
+          number: Number.isFinite(student.number) ? student.number : index + 1,
+          name: student.name?.trim() || `Student ${index + 1}`,
+          bonus: Math.max(0, Number.isFinite(student.bonus) ? student.bonus : 0),
+          minus: Math.max(0, Number.isFinite(student.minus) ? student.minus : 0)
+        }))
+      : []
+  }));
+};
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  ) {
+    return (error as { message: string }).message;
+  }
+  return 'Unknown error';
+};
+
+const areClassesEqual = (a: ClassGroup[], b: ClassGroup[]): boolean => JSON.stringify(a) === JSON.stringify(b);
+
 export default function App() {
   // Login State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [isCloudSyncing, setIsCloudSyncing] = useState(true);
+  const [cloudError, setCloudError] = useState<string | null>(null);
 
   // Helper for initial data loading with migration logic
   const getInitialClasses = (): ClassGroup[] => {
@@ -47,7 +99,7 @@ export default function App() {
           const v1Data = JSON.parse(savedV1);
           console.log("Migrating v1 data...");
           // Migrate simple score to bonus/minus
-          return v1Data.map((cls: any) => ({
+          return normalizeClasses(v1Data.map((cls: any) => ({
             ...cls,
             students: cls.students.map((s: any, idx: number) => ({
               id: s.id,
@@ -56,39 +108,59 @@ export default function App() {
               bonus: s.score > 0 ? s.score : 0,
               minus: s.score < 0 ? Math.abs(s.score) : 0
             }))
-          }));
+          })));
         } catch (e) {
           console.error("Failed to migrate v1 data", e);
         }
       }
     }
-    return INITIAL_DATA;
+    return normalizeClasses(INITIAL_DATA);
   };
 
   // App State with Persistence
   const [classes, setClasses] = useLocalStorage<ClassGroup[]>(STORAGE_KEY, getInitialClasses);
-  
-  // Data patching effect: Ensure all loaded students have numbers (self-healing for v2 data)
+
   useEffect(() => {
-    if (classes.length > 0) {
-      let needsUpdate = false;
-      const patchedClasses = classes.map(cls => ({
-        ...cls,
-        students: cls.students.map((s, idx) => {
-          if (typeof s.number !== 'number') {
-            needsUpdate = true;
-            return { ...s, number: idx + 1 };
-          }
-          return s;
-        })
-      }));
-      
-      if (needsUpdate) {
-        console.log("Patching missing student numbers...");
-        setClasses(patchedClasses);
+    let cancelled = false;
+
+    const bootstrapCloudData = async () => {
+      setIsCloudSyncing(true);
+      setCloudError(null);
+
+      try {
+        const localClasses = normalizeClasses(classes);
+        if (!areClassesEqual(localClasses, classes)) {
+          setClasses(localClasses);
+        }
+
+        const cloudClasses = normalizeClasses(await fetchClassesFromSupabase());
+        if (cancelled) return;
+
+        if (cloudClasses.length > 0) {
+          setClasses(cloudClasses);
+        } else if (localClasses.length > 0) {
+          await replaceAllDataInSupabase(localClasses);
+          setClasses(localClasses);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = getErrorMessage(error);
+          setCloudError(message);
+          console.error('Initial Supabase sync failed:', error);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsCloudSyncing(false);
+        }
       }
-    }
-  }, [classes.length]); // Run lightly, mainly on mount or import
+    };
+
+    void bootstrapCloudData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [activeClassId, setActiveClassId] = useState<string>(() => {
      // We can't easily rely on 'classes' here during init if it comes from the hook async-like
@@ -138,22 +210,35 @@ export default function App() {
   };
 
   // Handlers - Students
-  const updateStudentPoints = useCallback((studentId: string, type: 'bonus' | 'minus', delta: number) => {
-    if (!activeClassId) return;
-    
-    setClasses(prevClasses => prevClasses.map(cls => {
-      if (cls.id !== activeClassId) return cls;
-      return {
-        ...cls,
-        students: cls.students.map(student => {
-          if (student.id !== studentId) return student;
-          
-          const newValue = Math.max(0, student[type] + delta); // Prevent negative counts
-          return { ...student, [type]: newValue };
-        })
-      };
-    }));
-  }, [activeClassId, setClasses]);
+  const updateStudentPoints = useCallback(async (studentId: string, type: 'bonus' | 'minus', delta: number) => {
+    if (!activeClassId || !activeClass) return;
+
+    const currentStudent = activeClass.students.find(student => student.id === studentId);
+    if (!currentStudent) return;
+
+    const newValue = Math.max(0, currentStudent[type] + delta);
+    if (newValue === currentStudent[type]) return;
+
+    try {
+      await updateStudentMetricInSupabase(studentId, type, newValue);
+      setClasses(prevClasses => prevClasses.map(cls => {
+        if (cls.id !== activeClassId) return cls;
+        return {
+          ...cls,
+          students: cls.students.map(student => {
+            if (student.id !== studentId) return student;
+            return { ...student, [type]: newValue };
+          })
+        };
+      }));
+      setCloudError(null);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setCloudError(message);
+      console.error('Failed to update student points:', error);
+      alert(`Failed to update points: ${message}`);
+    }
+  }, [activeClass, activeClassId, setClasses]);
 
   const handleOpenAddStudentModal = () => {
     if (!activeClass) return;
@@ -163,7 +248,7 @@ export default function App() {
     setIsAddStudentModalOpen(true);
   };
 
-  const handleAddStudent = (e: React.FormEvent) => {
+  const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStudentName.trim() || !activeClassId || !newStudentNumber) return;
 
@@ -175,29 +260,47 @@ export default function App() {
       minus: 0
     };
 
-    setClasses(prev => prev.map(cls => 
-      cls.id === activeClassId 
-        ? { ...cls, students: [...cls.students, newStudent] } 
-        : cls
-    ));
+    try {
+      await addStudentToSupabase(activeClassId, newStudent);
+      setClasses(prev => prev.map(cls => 
+        cls.id === activeClassId 
+          ? { ...cls, students: [...cls.students, newStudent] } 
+          : cls
+      ));
 
-    setNewStudentName('');
-    setNewStudentNumber('');
-    setIsAddStudentModalOpen(false);
+      setNewStudentName('');
+      setNewStudentNumber('');
+      setIsAddStudentModalOpen(false);
+      setCloudError(null);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setCloudError(message);
+      console.error('Failed to add student:', error);
+      alert(`Failed to add student: ${message}`);
+    }
   };
 
-  const handleDeleteStudent = (studentId: string) => {
+  const handleDeleteStudent = async (studentId: string) => {
     if (!window.confirm("Are you sure you want to remove this student?")) return;
-    
-    setClasses(prev => prev.map(cls => 
-      cls.id === activeClassId
-        ? { ...cls, students: cls.students.filter(s => s.id !== studentId) }
-        : cls
-    ));
+
+    try {
+      await deleteStudentFromSupabase(studentId);
+      setClasses(prev => prev.map(cls => 
+        cls.id === activeClassId
+          ? { ...cls, students: cls.students.filter(s => s.id !== studentId) }
+          : cls
+      ));
+      setCloudError(null);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setCloudError(message);
+      console.error('Failed to delete student:', error);
+      alert(`Failed to delete student: ${message}`);
+    }
   };
 
   // Handlers - Classes
-  const handleAddClass = (e: React.FormEvent) => {
+  const handleAddClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClassName.trim()) return;
 
@@ -207,18 +310,36 @@ export default function App() {
       students: []
     };
 
-    setClasses(prev => [...prev, newClass]);
-    setActiveClassId(newClass.id);
-    setNewClassName('');
-    setIsAddClassModalOpen(false);
+    try {
+      await addClassToSupabase(newClass);
+      setClasses(prev => [...prev, newClass]);
+      setActiveClassId(newClass.id);
+      setNewClassName('');
+      setIsAddClassModalOpen(false);
+      setCloudError(null);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setCloudError(message);
+      console.error('Failed to create class:', error);
+      alert(`Failed to create class: ${message}`);
+    }
   };
 
-  const handleDeleteClass = (classId: string) => {
+  const handleDeleteClass = async (classId: string) => {
     if (!window.confirm("Delete this class and all its students?")) return;
-    
-    const newClasses = classes.filter(c => c.id !== classId);
-    setClasses(newClasses);
-    // Active class update handled by useEffect
+
+    try {
+      await deleteClassFromSupabase(classId);
+      const newClasses = classes.filter(c => c.id !== classId);
+      setClasses(newClasses);
+      setCloudError(null);
+      // Active class update handled by useEffect
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setCloudError(message);
+      console.error('Failed to delete class:', error);
+      alert(`Failed to delete class: ${message}`);
+    }
   };
 
   // Handlers - Data Management
@@ -243,7 +364,7 @@ export default function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const content = e.target?.result;
         if (typeof content === 'string') {
@@ -254,8 +375,11 @@ export default function App() {
             
             if (isValid) {
               if (window.confirm("This will replace your current data with the imported file. Continue?")) {
-                setClasses(parsedData);
-                alert("Data imported successfully!");
+                const normalizedData = normalizeClasses(parsedData);
+                await replaceAllDataInSupabase(normalizedData);
+                setClasses(normalizedData);
+                setCloudError(null);
+                alert("Data imported successfully and synced to Supabase!");
               }
             } else {
               alert("Invalid file format. Please import a valid ClassTrack JSON file.");
@@ -265,8 +389,9 @@ export default function App() {
           }
         }
       } catch (err) {
+        setCloudError(getErrorMessage(err));
         console.error("Import error:", err);
-        alert("Failed to parse the file. Please ensure it is a valid JSON.");
+        alert(`Failed to import file: ${getErrorMessage(err)}`);
       }
       // Reset input
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -418,6 +543,13 @@ export default function App() {
                   </button>
                 </>
               )}
+              <span
+                className={`hidden sm:block text-xs font-medium ${
+                  cloudError ? 'text-rose-500' : isCloudSyncing ? 'text-amber-500' : 'text-emerald-600'
+                }`}
+              >
+                {cloudError ? 'Cloud error' : isCloudSyncing ? 'Syncing cloud...' : 'Cloud synced'}
+              </span>
               <button 
                 onClick={() => setIsAuthenticated(false)}
                 className="text-xs font-medium text-slate-500 hover:text-slate-800 ml-1"
