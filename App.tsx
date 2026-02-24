@@ -62,14 +62,8 @@ export default function App() {
   const [isCloudSyncing, setIsCloudSyncing] = useState(true);
   const [cloudError, setCloudError] = useState<string | null>(null);
   const [classes, setClasses] = useState<ClassGroup[]>([]);
-  const hasBootstrappedCloud = useRef(false);
 
   useEffect(() => {
-    if (hasBootstrappedCloud.current) {
-      return;
-    }
-    hasBootstrappedCloud.current = true;
-
     let cancelled = false;
 
     const bootstrapCloudData = async () => {
@@ -428,6 +422,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleImportFile}
+        className="hidden"
+        accept="application/json"
+      />
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -458,13 +459,6 @@ export default function App() {
                      >
                        <UploadIcon className="w-4 h-4" />
                      </button>
-                     <input 
-                       type="file" 
-                       ref={fileInputRef} 
-                       onChange={handleImportFile} 
-                       className="hidden" 
-                       accept="application/json"
-                     />
                   </div>
 
                   <button 
