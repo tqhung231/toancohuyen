@@ -10,10 +10,12 @@ import {
   deleteStudentFromSupabase,
   fetchClassesFromSupabase,
   replaceAllDataInSupabase,
-  updateStudentMetricInSupabase
+  updateStudentMetricInSupabase,
+  updateStudentNoteInSupabase
 } from './services/classDataService';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const NOTE_AUTOSAVE_DELAY_MS = 700;
 
 const ensureUuid = (value: unknown): string => {
   if (typeof value === 'string' && UUID_PATTERN.test(value)) {
@@ -32,7 +34,10 @@ const normalizeClasses = (input: ClassGroup[]): ClassGroup[] => {
           number: Number.isFinite(student.number) ? student.number : index + 1,
           name: student.name?.trim() || `Student ${index + 1}`,
           bonus: Math.max(0, Number.isFinite(student.bonus) ? student.bonus : 0),
-          minus: Math.max(0, Number.isFinite(student.minus) ? student.minus : 0)
+          minus: Math.max(0, Number.isFinite(student.minus) ? student.minus : 0),
+          note: typeof (student as { note?: unknown }).note === 'string'
+            ? ((student as { note?: string }).note ?? '')
+            : ''
         }))
       : []
   }));
@@ -108,6 +113,12 @@ export default function App() {
   const [isAddClassModalOpen, setIsAddClassModalOpen] = useState(false);
   const [newClassName, setNewClassName] = useState('');
 
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [editingNoteStudentId, setEditingNoteStudentId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [noteError, setNoteError] = useState('');
+  const [isNoteSaving, setIsNoteSaving] = useState(false);
+
   const [aiInsight, setAiInsight] = useState<AIInsightState>({
     loading: false,
     content: null,
@@ -116,9 +127,112 @@ export default function App() {
   const [isInsightModalOpen, setIsInsightModalOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const noteSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingNoteSavesRef = useRef(0);
+  const editingNoteStudentIdRef = useRef<string | null>(null);
+  const noteDraftRef = useRef('');
+  const lastPersistedNoteRef = useRef('');
 
   // Derived State
   const activeClass = classes.find(c => c.id === activeClassId);
+  const editingStudentName = activeClass?.students.find(s => s.id === editingNoteStudentId)?.name;
+
+  useEffect(() => {
+    editingNoteStudentIdRef.current = editingNoteStudentId;
+  }, [editingNoteStudentId]);
+
+  useEffect(() => {
+    noteDraftRef.current = noteDraft;
+  }, [noteDraft]);
+
+  const clearNoteAutosaveTimer = useCallback(() => {
+    if (noteSaveTimeoutRef.current) {
+      clearTimeout(noteSaveTimeoutRef.current);
+      noteSaveTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearNoteAutosaveTimer();
+    };
+  }, [clearNoteAutosaveTimer]);
+
+  useEffect(() => {
+    if (!isNoteModalOpen || !editingNoteStudentId) return;
+
+    const studentStillExists = classes.some(cls =>
+      cls.students.some(student => student.id === editingNoteStudentId)
+    );
+
+    if (!studentStillExists) {
+      clearNoteAutosaveTimer();
+      setIsNoteModalOpen(false);
+      setEditingNoteStudentId(null);
+      editingNoteStudentIdRef.current = null;
+      setNoteDraft('');
+      noteDraftRef.current = '';
+      lastPersistedNoteRef.current = '';
+      setNoteError('');
+    }
+  }, [classes, clearNoteAutosaveTimer, editingNoteStudentId, isNoteModalOpen]);
+
+  const setStudentNoteInState = useCallback((studentId: string, note: string) => {
+    setClasses(prevClasses => prevClasses.map(cls => ({
+      ...cls,
+      students: cls.students.map(student =>
+        student.id === studentId ? { ...student, note } : student
+      )
+    })));
+  }, []);
+
+  const enqueueNoteSave = useCallback((studentId: string, note: string): Promise<void> => {
+    pendingNoteSavesRef.current += 1;
+    setIsNoteSaving(true);
+
+    const nextSave = noteSaveQueueRef.current.then(async () => {
+      await updateStudentNoteInSupabase(studentId, note);
+      setStudentNoteInState(studentId, note);
+      lastPersistedNoteRef.current = note;
+      setNoteError('');
+    });
+
+    const wrappedSave = nextSave.finally(() => {
+      pendingNoteSavesRef.current = Math.max(0, pendingNoteSavesRef.current - 1);
+      if (pendingNoteSavesRef.current === 0) {
+        setIsNoteSaving(false);
+      }
+    });
+
+    noteSaveQueueRef.current = wrappedSave.catch(() => {});
+    return wrappedSave;
+  }, [setStudentNoteInState]);
+
+  const persistCurrentNote = useCallback(async (force = false) => {
+    const studentId = editingNoteStudentIdRef.current;
+    if (!studentId) return;
+
+    const noteToPersist = noteDraftRef.current;
+    if (!force && noteToPersist === lastPersistedNoteRef.current) return;
+
+    try {
+      await enqueueNoteSave(studentId, noteToPersist);
+    } catch (error) {
+      console.error('Failed to save note:', error);
+      const message = getErrorMessage(error);
+      setNoteError(`Failed to save note: ${message}`);
+      throw error;
+    }
+  }, [enqueueNoteSave]);
+
+  const scheduleAutosaveNote = useCallback(() => {
+    if (!editingNoteStudentIdRef.current) return;
+    clearNoteAutosaveTimer();
+    noteSaveTimeoutRef.current = setTimeout(() => {
+      void persistCurrentNote();
+    }, NOTE_AUTOSAVE_DELAY_MS);
+  }, [clearNoteAutosaveTimer, persistCurrentNote]);
 
   // Handlers - Login
   const handleLogin = (e: React.FormEvent) => {
@@ -177,7 +291,8 @@ export default function App() {
       name: newStudentName.trim(),
       number: parseInt(newStudentNumber, 10),
       bonus: 0,
-      minus: 0
+      minus: 0,
+      note: ''
     };
 
     try {
@@ -212,6 +327,46 @@ export default function App() {
       const message = getErrorMessage(error);
       console.error('Failed to delete student:', error);
       alert(`Failed to delete student: ${message}`);
+    }
+  };
+
+  const handleOpenNoteModal = (studentId: string) => {
+    if (!activeClass) return;
+
+    const student = activeClass.students.find(s => s.id === studentId);
+    if (!student) return;
+
+    clearNoteAutosaveTimer();
+    setEditingNoteStudentId(studentId);
+    editingNoteStudentIdRef.current = studentId;
+    setNoteDraft(student.note);
+    noteDraftRef.current = student.note;
+    lastPersistedNoteRef.current = student.note;
+    setNoteError('');
+    setIsNoteModalOpen(true);
+  };
+
+  const handleNoteDraftChange = (value: string) => {
+    setNoteDraft(value);
+    noteDraftRef.current = value;
+    setNoteError('');
+    scheduleAutosaveNote();
+  };
+
+  const handleCloseNoteModal = async () => {
+    clearNoteAutosaveTimer();
+    try {
+      await persistCurrentNote();
+      await noteSaveQueueRef.current;
+      setIsNoteModalOpen(false);
+      setEditingNoteStudentId(null);
+      editingNoteStudentIdRef.current = null;
+      setNoteDraft('');
+      noteDraftRef.current = '';
+      lastPersistedNoteRef.current = '';
+      setNoteError('');
+    } catch {
+      // Error is already surfaced in modal; keep it open until save succeeds.
     }
   };
 
@@ -525,7 +680,7 @@ export default function App() {
             {sortedStudents.length > 0 ? (
               <div className="flex flex-col gap-3">
                  {/* List Header (Hidden on mobile) */}
-                 <div className="hidden md:grid grid-cols-[72px_minmax(0,1fr)_150px_150px_110px_44px] gap-3 px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider items-center">
+                 <div className="hidden md:grid grid-cols-[72px_minmax(0,1fr)_150px_150px_110px_100px] gap-3 px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider items-center">
                     <span className="text-center">No.</span>
                     <span className="text-left">Student</span>
                     <span className="text-center">Bonus</span>
@@ -540,6 +695,7 @@ export default function App() {
                     onUpdateBonus={(id, delta) => updateStudentPoints(id, 'bonus', delta)}
                     onUpdateMinus={(id, delta) => updateStudentPoints(id, 'minus', delta)}
                     onDelete={handleDeleteStudent}
+                    onEditNote={handleOpenNoteModal}
                   />
                 ))}
               </div>
@@ -674,6 +830,58 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Note Modal */}
+      {isNoteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-slate-800">
+                Student Notes
+                <span className="block text-sm font-normal text-slate-500 mt-1">
+                  For: {editingStudentName ?? 'Unknown student'}
+                </span>
+              </h3>
+              <button
+                onClick={() => { void handleCloseNoteModal(); }}
+                className="text-slate-400 hover:text-slate-600 disabled:text-slate-300"
+                aria-label="Close notes modal"
+                disabled={isNoteSaving}
+              >
+                <XIcon className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-2">Notes</label>
+              <textarea
+                autoFocus
+                value={noteDraft}
+                onChange={(e) => handleNoteDraftChange(e.target.value)}
+                placeholder="Write observations, areas for improvement, or praise here..."
+                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all min-h-[220px] resize-y bg-white text-slate-900 placeholder:text-slate-400"
+              />
+            </div>
+
+            {noteError && (
+              <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {noteError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => { void handleCloseNoteModal(); }}
+                disabled={isNoteSaving}
+                className="px-6 py-2 bg-indigo-600 disabled:bg-indigo-300 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+              >
+                {isNoteSaving ? 'Saving...' : 'Close'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -20,5 +20,6 @@ View your app in AI Studio: https://ai.studio/apps/drive/1LygXpg_bsteuNjjMX2riU0
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
    - `API_KEY` (optional, for Gemini AI insights)
 3. In Supabase SQL editor, run [supabase/schema.sql](supabase/schema.sql)
+   - If you already ran it before, rerun it (or execute `alter table students add column if not exists note text not null default '';`) to add student notes.
 4. Run the app:
    `npm run dev`

@@ -13,8 +13,12 @@ create table if not exists students (
   name text not null,
   bonus int not null default 0,
   minus int not null default 0,
+  note text not null default '',
   created_at timestamptz not null default now()
 );
+
+alter table students
+  add column if not exists note text not null default '';
 
 alter table classes enable row level security;
 alter table students enable row level security;

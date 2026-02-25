@@ -1,26 +1,29 @@
 import React from 'react';
 import { Student } from '../types';
-import { PlusIcon, MinusIcon, TrashIcon } from './Icons';
+import { PlusIcon, MinusIcon, TrashIcon, FileTextIcon } from './Icons';
 
 interface StudentCardProps {
   student: Student;
   onUpdateBonus: (id: string, delta: number) => void;
   onUpdateMinus: (id: string, delta: number) => void;
   onDelete: (id: string) => void;
+  onEditNote: (id: string) => void;
 }
 
 export const StudentCard: React.FC<StudentCardProps> = ({ 
   student, 
   onUpdateBonus, 
   onUpdateMinus, 
-  onDelete 
+  onDelete,
+  onEditNote
 }) => {
   const netScore = student.bonus - student.minus;
   const isPositive = netScore > 0;
   const isNegative = netScore < 0;
+  const hasNote = student.note.trim().length > 0;
 
   return (
-    <div className="group bg-white rounded-xl shadow-sm border border-slate-200 p-4 grid grid-cols-1 md:grid-cols-[72px_minmax(0,1fr)_150px_150px_110px_44px] gap-4 md:gap-3 md:items-center transition-all duration-200 hover:shadow-md hover:border-indigo-100">
+    <div className="group bg-white rounded-xl shadow-sm border border-slate-200 p-4 grid grid-cols-1 md:grid-cols-[72px_minmax(0,1fr)_150px_150px_110px_100px] gap-4 md:gap-3 md:items-center transition-all duration-200 hover:shadow-md hover:border-indigo-100">
       {/* Student Number */}
       <div className="col-span-full md:col-span-1 flex items-center justify-start md:justify-center">
         <div className="flex items-center justify-center w-12 h-10 shrink-0 text-xl font-bold text-slate-300 tabular-nums">
@@ -95,7 +98,19 @@ export const StudentCard: React.FC<StudentCardProps> = ({
       </div>
 
       {/* Actions */}
-      <div className="col-span-full md:col-span-1 flex justify-end md:justify-self-end">
+      <div className="col-span-full md:col-span-1 flex justify-end gap-1 md:justify-self-end">
+        <button
+          onClick={() => onEditNote(student.id)}
+          className={`p-2 rounded-full transition-colors ${
+            hasNote
+              ? 'text-indigo-500 bg-indigo-50 hover:text-indigo-600 hover:bg-indigo-100'
+              : 'text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'
+          }`}
+          title={hasNote ? 'View or Edit Note' : 'Add Note'}
+          aria-label={hasNote ? `View note for ${student.name}` : `Add note for ${student.name}`}
+        >
+          <FileTextIcon className="w-5 h-5" />
+        </button>
         <button 
           onClick={() => onDelete(student.id)}
           className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-colors"

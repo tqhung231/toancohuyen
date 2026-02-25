@@ -15,6 +15,7 @@ interface StudentRow {
   name: string;
   bonus: number;
   minus: number;
+  note: string | null;
 }
 
 const toClassGroups = (classRows: ClassRow[], studentRows: StudentRow[]): ClassGroup[] => {
@@ -27,7 +28,8 @@ const toClassGroups = (classRows: ClassRow[], studentRows: StudentRow[]): ClassG
       number: row.number,
       name: row.name,
       bonus: row.bonus,
-      minus: row.minus
+      minus: row.minus,
+      note: row.note ?? ''
     });
     studentsByClass.set(row.class_id, list);
   }
@@ -44,7 +46,7 @@ export const fetchClassesFromSupabase = async (): Promise<ClassGroup[]> => {
 
   const [{ data: classes, error: classError }, { data: students, error: studentError }] = await Promise.all([
     supabase.from('classes').select('id, name'),
-    supabase.from('students').select('id, class_id, number, name, bonus, minus').order('number', { ascending: true })
+    supabase.from('students').select('id, class_id, number, name, bonus, minus, note').order('number', { ascending: true })
   ]);
 
   if (classError) {
@@ -87,7 +89,8 @@ export const addStudentToSupabase = async (classId: string, student: Student): P
     number: student.number,
     name: student.name,
     bonus: student.bonus,
-    minus: student.minus
+    minus: student.minus,
+    note: student.note
   });
 
   if (error) {
@@ -111,6 +114,15 @@ export const updateStudentMetricInSupabase = async (
 ): Promise<void> => {
   const supabase = ensureSupabaseClient();
   const { error } = await supabase.from('students').update({ [metric]: value }).eq('id', studentId);
+
+  if (error) {
+    throw error;
+  }
+};
+
+export const updateStudentNoteInSupabase = async (studentId: string, note: string): Promise<void> => {
+  const supabase = ensureSupabaseClient();
+  const { error } = await supabase.from('students').update({ note }).eq('id', studentId);
 
   if (error) {
     throw error;
@@ -151,7 +163,8 @@ export const replaceAllDataInSupabase = async (classes: ClassGroup[]): Promise<v
       number: student.number,
       name: student.name,
       bonus: student.bonus,
-      minus: student.minus
+      minus: student.minus,
+      note: student.note
     }))
   );
 
