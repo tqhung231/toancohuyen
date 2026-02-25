@@ -59,17 +59,13 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [isCloudSyncing, setIsCloudSyncing] = useState(true);
-  const [cloudError, setCloudError] = useState<string | null>(null);
   const [classes, setClasses] = useState<ClassGroup[]>([]);
+  const hasShownInitialSyncError = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
 
     const bootstrapCloudData = async () => {
-      setIsCloudSyncing(true);
-      setCloudError(null);
-
       try {
         const cloudClasses = normalizeClasses(await fetchClassesFromSupabase());
         if (cancelled) return;
@@ -77,12 +73,11 @@ export default function App() {
       } catch (error) {
         if (!cancelled) {
           const message = getErrorMessage(error);
-          setCloudError(message);
           console.error('Initial Supabase sync failed:', error);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsCloudSyncing(false);
+          if (!hasShownInitialSyncError.current) {
+            hasShownInitialSyncError.current = true;
+            alert(`Failed to load data from cloud: ${message}`);
+          }
         }
       }
     };
@@ -158,10 +153,8 @@ export default function App() {
           })
         };
       }));
-      setCloudError(null);
     } catch (error) {
       const message = getErrorMessage(error);
-      setCloudError(message);
       console.error('Failed to update student points:', error);
       alert(`Failed to update points: ${message}`);
     }
@@ -198,10 +191,8 @@ export default function App() {
       setNewStudentName('');
       setNewStudentNumber('');
       setIsAddStudentModalOpen(false);
-      setCloudError(null);
     } catch (error) {
       const message = getErrorMessage(error);
-      setCloudError(message);
       console.error('Failed to add student:', error);
       alert(`Failed to add student: ${message}`);
     }
@@ -217,10 +208,8 @@ export default function App() {
           ? { ...cls, students: cls.students.filter(s => s.id !== studentId) }
           : cls
       ));
-      setCloudError(null);
     } catch (error) {
       const message = getErrorMessage(error);
-      setCloudError(message);
       console.error('Failed to delete student:', error);
       alert(`Failed to delete student: ${message}`);
     }
@@ -243,10 +232,8 @@ export default function App() {
       setActiveClassId(newClass.id);
       setNewClassName('');
       setIsAddClassModalOpen(false);
-      setCloudError(null);
     } catch (error) {
       const message = getErrorMessage(error);
-      setCloudError(message);
       console.error('Failed to create class:', error);
       alert(`Failed to create class: ${message}`);
     }
@@ -259,11 +246,9 @@ export default function App() {
       await deleteClassFromSupabase(classId);
       const newClasses = classes.filter(c => c.id !== classId);
       setClasses(newClasses);
-      setCloudError(null);
       // Active class update handled by useEffect
     } catch (error) {
       const message = getErrorMessage(error);
-      setCloudError(message);
       console.error('Failed to delete class:', error);
       alert(`Failed to delete class: ${message}`);
     }
@@ -305,7 +290,6 @@ export default function App() {
                 const normalizedData = normalizeClasses(parsedData);
                 await replaceAllDataInSupabase(normalizedData);
                 setClasses(normalizedData);
-                setCloudError(null);
                 alert("Data imported successfully and synced to Supabase!");
               }
             } else {
@@ -316,7 +300,6 @@ export default function App() {
           }
         }
       } catch (err) {
-        setCloudError(getErrorMessage(err));
         console.error("Import error:", err);
         alert(`Failed to import file: ${getErrorMessage(err)}`);
       }
@@ -470,13 +453,6 @@ export default function App() {
                   </button>
                 </>
               )}
-              <span
-                className={`hidden sm:block text-xs font-medium ${
-                  cloudError ? 'text-rose-500' : isCloudSyncing ? 'text-amber-500' : 'text-emerald-600'
-                }`}
-              >
-                {cloudError ? 'Cloud error' : isCloudSyncing ? 'Syncing cloud...' : 'Cloud synced'}
-              </span>
               <button 
                 onClick={() => setIsAuthenticated(false)}
                 className="text-xs font-medium text-slate-500 hover:text-slate-800 ml-1"
