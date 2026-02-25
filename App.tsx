@@ -1,57 +1,31 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ClassGroup, Student, AIInsightState } from './types';
 import { StudentCard } from './components/StudentCard';
-import { UsersIcon, PlusIcon, SparklesIcon, XIcon, TrophyIcon, DownloadIcon, UploadIcon } from './components/Icons';
+import { UsersIcon, PlusIcon, SparklesIcon, XIcon, TrophyIcon, DownloadIcon, UploadIcon, FileTextIcon } from './components/Icons';
 import { generateClassReport } from './services/geminiService';
-import {
-  addClassToSupabase,
-  addStudentToSupabase,
-  deleteClassFromSupabase,
-  deleteStudentFromSupabase,
-  fetchClassesFromSupabase,
-  replaceAllDataInSupabase,
-  updateStudentMetricInSupabase
-} from './services/classDataService';
+import { useLocalStorage } from './hooks/useLocalStorage';
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const STORAGE_KEY = 'classtrack-data-v2';
 
-const ensureUuid = (value: unknown): string => {
-  if (typeof value === 'string' && UUID_PATTERN.test(value)) {
-    return value;
+const INITIAL_DATA: ClassGroup[] = [
+  {
+    id: 'class-1',
+    name: 'Class 1A',
+    students: [
+      { id: 's1', number: 1, name: 'Alice Johnson', bonus: 5, minus: 0, note: '' },
+      { id: 's2', number: 2, name: 'Bob Smith', bonus: 2, minus: 4, note: 'Needs more focus on homework.' },
+      { id: 's3', number: 3, name: 'Charlie Davis', bonus: 8, minus: 1, note: '' },
+    ],
+  },
+  {
+    id: 'class-2',
+    name: 'Science 101',
+    students: [
+      { id: 's4', number: 1, name: 'Dana Lee', bonus: 1, minus: 1, note: '' },
+      { id: 's5', number: 2, name: 'Evan Wright', bonus: 3, minus: 0, note: '' },
+    ],
   }
-  return crypto.randomUUID();
-};
-
-const normalizeClasses = (input: ClassGroup[]): ClassGroup[] => {
-  return input.map((cls, clsIndex) => ({
-    id: ensureUuid(cls.id),
-    name: cls.name?.trim() || `Class ${clsIndex + 1}`,
-    students: Array.isArray(cls.students)
-      ? cls.students.map((student, index) => ({
-          id: ensureUuid(student.id),
-          number: Number.isFinite(student.number) ? student.number : index + 1,
-          name: student.name?.trim() || `Student ${index + 1}`,
-          bonus: Math.max(0, Number.isFinite(student.bonus) ? student.bonus : 0),
-          minus: Math.max(0, Number.isFinite(student.minus) ? student.minus : 0)
-        }))
-      : []
-  }));
-};
-
-const getErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  if (
-    typeof error === 'object' &&
-    error !== null &&
-    'message' in error &&
-    typeof (error as { message: unknown }).message === 'string'
-  ) {
-    return (error as { message: string }).message;
-  }
-  return 'Unknown error';
-};
+];
 
 export default function App() {
   // Login State
@@ -59,37 +33,73 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [classes, setClasses] = useState<ClassGroup[]>([]);
-  const hasShownInitialSyncError = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const bootstrapCloudData = async () => {
-      try {
-        const cloudClasses = normalizeClasses(await fetchClassesFromSupabase());
-        if (cancelled) return;
-        setClasses(cloudClasses);
-      } catch (error) {
-        if (!cancelled) {
-          const message = getErrorMessage(error);
-          console.error('Initial Supabase sync failed:', error);
-          if (!hasShownInitialSyncError.current) {
-            hasShownInitialSyncError.current = true;
-            alert(`Failed to load data from cloud: ${message}`);
-          }
+  // Helper for initial data loading with migration logic
+  const getInitialClasses = (): ClassGroup[] => {
+    // Note: The useLocalStorage hook will first check STORAGE_KEY. 
+    // This helper is primarily for the fallback (v1 migration or default data).
+    
+    // Check for v1 data (migration) if v2 doesn't exist (handled by hook's logic flow)
+    if (typeof window !== 'undefined') {
+      const savedV1 = localStorage.getItem('classtrack-data-v1');
+      if (savedV1) {
+        try {
+          const v1Data = JSON.parse(savedV1);
+          console.log("Migrating v1 data...");
+          // Migrate simple score to bonus/minus
+          return v1Data.map((cls: any) => ({
+            ...cls,
+            students: cls.students.map((s: any, idx: number) => ({
+              id: s.id,
+              name: s.name,
+              number: idx + 1,
+              bonus: s.score > 0 ? s.score : 0,
+              minus: s.score < 0 ? Math.abs(s.score) : 0,
+              note: ''
+            }))
+          }));
+        } catch (e) {
+          console.error("Failed to migrate v1 data", e);
         }
       }
-    };
+    }
+    return INITIAL_DATA;
+  };
 
-    void bootstrapCloudData();
+  // App State with Persistence
+  const [classes, setClasses] = useLocalStorage<ClassGroup[]>(STORAGE_KEY, getInitialClasses);
+  
+  // Data patching effect: Ensure all loaded students have numbers (self-healing for v2 data)
+  useEffect(() => {
+    if (classes.length > 0) {
+      let needsUpdate = false;
+      const patchedClasses = classes.map(cls => ({
+        ...cls,
+        students: cls.students.map((s, idx) => {
+          let updatedStudent = { ...s };
+          if (typeof s.number !== 'number') {
+            needsUpdate = true;
+            updatedStudent.number = idx + 1;
+          }
+          // Ensure note field exists for legacy data
+          if (s.note === undefined) {
+             needsUpdate = true;
+             updatedStudent.note = '';
+          }
+          return updatedStudent;
+        })
+      }));
+      
+      if (needsUpdate) {
+        console.log("Patching missing student data (numbers/notes)...");
+        setClasses(patchedClasses);
+      }
+    }
+  }, [classes.length]); // Run lightly, mainly on mount or import
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const [activeClassId, setActiveClassId] = useState<string>('');
+  const [activeClassId, setActiveClassId] = useState<string>(() => {
+     return '';
+  });
 
   // Sync active class when classes load/change
   useEffect(() => {
@@ -107,6 +117,11 @@ export default function App() {
   
   const [isAddClassModalOpen, setIsAddClassModalOpen] = useState(false);
   const [newClassName, setNewClassName] = useState('');
+
+  // Note Modal State
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [editingNoteStudentId, setEditingNoteStudentId] = useState<string | null>(null);
+  const [currentNote, setCurrentNote] = useState('');
 
   const [aiInsight, setAiInsight] = useState<AIInsightState>({
     loading: false,
@@ -132,33 +147,22 @@ export default function App() {
   };
 
   // Handlers - Students
-  const updateStudentPoints = useCallback(async (studentId: string, type: 'bonus' | 'minus', delta: number) => {
-    if (!activeClassId || !activeClass) return;
-
-    const currentStudent = activeClass.students.find(student => student.id === studentId);
-    if (!currentStudent) return;
-
-    const newValue = Math.max(0, currentStudent[type] + delta);
-    if (newValue === currentStudent[type]) return;
-
-    try {
-      await updateStudentMetricInSupabase(studentId, type, newValue);
-      setClasses(prevClasses => prevClasses.map(cls => {
-        if (cls.id !== activeClassId) return cls;
-        return {
-          ...cls,
-          students: cls.students.map(student => {
-            if (student.id !== studentId) return student;
-            return { ...student, [type]: newValue };
-          })
-        };
-      }));
-    } catch (error) {
-      const message = getErrorMessage(error);
-      console.error('Failed to update student points:', error);
-      alert(`Failed to update points: ${message}`);
-    }
-  }, [activeClass, activeClassId, setClasses]);
+  const updateStudentPoints = useCallback((studentId: string, type: 'bonus' | 'minus', delta: number) => {
+    if (!activeClassId) return;
+    
+    setClasses(prevClasses => prevClasses.map(cls => {
+      if (cls.id !== activeClassId) return cls;
+      return {
+        ...cls,
+        students: cls.students.map(student => {
+          if (student.id !== studentId) return student;
+          
+          const newValue = Math.max(0, student[type] + delta); // Prevent negative counts
+          return { ...student, [type]: newValue };
+        })
+      };
+    }));
+  }, [activeClassId, setClasses]);
 
   const handleOpenAddStudentModal = () => {
     if (!activeClass) return;
@@ -168,7 +172,7 @@ export default function App() {
     setIsAddStudentModalOpen(true);
   };
 
-  const handleAddStudent = async (e: React.FormEvent) => {
+  const handleAddStudent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStudentName.trim() || !activeClassId || !newStudentNumber) return;
 
@@ -177,46 +181,62 @@ export default function App() {
       name: newStudentName.trim(),
       number: parseInt(newStudentNumber, 10),
       bonus: 0,
-      minus: 0
+      minus: 0,
+      note: ''
     };
 
-    try {
-      await addStudentToSupabase(activeClassId, newStudent);
-      setClasses(prev => prev.map(cls => 
-        cls.id === activeClassId 
-          ? { ...cls, students: [...cls.students, newStudent] } 
-          : cls
-      ));
+    setClasses(prev => prev.map(cls => 
+      cls.id === activeClassId 
+        ? { ...cls, students: [...cls.students, newStudent] } 
+        : cls
+    ));
 
-      setNewStudentName('');
-      setNewStudentNumber('');
-      setIsAddStudentModalOpen(false);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      console.error('Failed to add student:', error);
-      alert(`Failed to add student: ${message}`);
-    }
+    setNewStudentName('');
+    setNewStudentNumber('');
+    setIsAddStudentModalOpen(false);
   };
 
-  const handleDeleteStudent = async (studentId: string) => {
+  const handleDeleteStudent = (studentId: string) => {
     if (!window.confirm("Are you sure you want to remove this student?")) return;
+    
+    setClasses(prev => prev.map(cls => 
+      cls.id === activeClassId
+        ? { ...cls, students: cls.students.filter(s => s.id !== studentId) }
+        : cls
+    ));
+  };
 
-    try {
-      await deleteStudentFromSupabase(studentId);
-      setClasses(prev => prev.map(cls => 
-        cls.id === activeClassId
-          ? { ...cls, students: cls.students.filter(s => s.id !== studentId) }
-          : cls
-      ));
-    } catch (error) {
-      const message = getErrorMessage(error);
-      console.error('Failed to delete student:', error);
-      alert(`Failed to delete student: ${message}`);
-    }
+  // Handlers - Notes
+  const handleOpenNoteModal = (studentId: string) => {
+    if (!activeClass) return;
+    const student = activeClass.students.find(s => s.id === studentId);
+    if (!student) return;
+
+    setEditingNoteStudentId(studentId);
+    setCurrentNote(student.note || '');
+    setIsNoteModalOpen(true);
+  };
+
+  const handleSaveNote = () => {
+    if (!activeClassId || !editingNoteStudentId) return;
+
+    setClasses(prev => prev.map(cls => {
+      if (cls.id !== activeClassId) return cls;
+      return {
+        ...cls,
+        students: cls.students.map(s => 
+          s.id === editingNoteStudentId ? { ...s, note: currentNote } : s
+        )
+      };
+    }));
+
+    setIsNoteModalOpen(false);
+    setEditingNoteStudentId(null);
+    setCurrentNote('');
   };
 
   // Handlers - Classes
-  const handleAddClass = async (e: React.FormEvent) => {
+  const handleAddClass = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClassName.trim()) return;
 
@@ -226,32 +246,18 @@ export default function App() {
       students: []
     };
 
-    try {
-      await addClassToSupabase(newClass);
-      setClasses(prev => [...prev, newClass]);
-      setActiveClassId(newClass.id);
-      setNewClassName('');
-      setIsAddClassModalOpen(false);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      console.error('Failed to create class:', error);
-      alert(`Failed to create class: ${message}`);
-    }
+    setClasses(prev => [...prev, newClass]);
+    setActiveClassId(newClass.id);
+    setNewClassName('');
+    setIsAddClassModalOpen(false);
   };
 
-  const handleDeleteClass = async (classId: string) => {
+  const handleDeleteClass = (classId: string) => {
     if (!window.confirm("Delete this class and all its students?")) return;
-
-    try {
-      await deleteClassFromSupabase(classId);
-      const newClasses = classes.filter(c => c.id !== classId);
-      setClasses(newClasses);
-      // Active class update handled by useEffect
-    } catch (error) {
-      const message = getErrorMessage(error);
-      console.error('Failed to delete class:', error);
-      alert(`Failed to delete class: ${message}`);
-    }
+    
+    const newClasses = classes.filter(c => c.id !== classId);
+    setClasses(newClasses);
+    // Active class update handled by useEffect
   };
 
   // Handlers - Data Management
@@ -276,21 +282,19 @@ export default function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = async (e) => {
+    reader.onload = (e) => {
       try {
         const content = e.target?.result;
         if (typeof content === 'string') {
           const parsedData = JSON.parse(content);
           if (Array.isArray(parsedData)) {
             // Basic validation: Check if it has classes structure
-            const isValid = parsedData.every((item: any) => item && item.name && Array.isArray(item.students));
+            const isValid = parsedData.every((item: any) => item.id && item.name && Array.isArray(item.students));
             
             if (isValid) {
               if (window.confirm("This will replace your current data with the imported file. Continue?")) {
-                const normalizedData = normalizeClasses(parsedData);
-                await replaceAllDataInSupabase(normalizedData);
-                setClasses(normalizedData);
-                alert("Data imported successfully and synced to Supabase!");
+                setClasses(parsedData);
+                alert("Data imported successfully!");
               }
             } else {
               alert("Invalid file format. Please import a valid ClassTrack JSON file.");
@@ -301,7 +305,7 @@ export default function App() {
         }
       } catch (err) {
         console.error("Import error:", err);
-        alert(`Failed to import file: ${getErrorMessage(err)}`);
+        alert("Failed to parse the file. Please ensure it is a valid JSON.");
       }
       // Reset input
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -347,6 +351,8 @@ export default function App() {
   const sortedStudents = activeClass 
     ? [...activeClass.students].sort((a, b) => (a.number || 0) - (b.number || 0)) 
     : [];
+
+  const editingStudentName = activeClass?.students.find(s => s.id === editingNoteStudentId)?.name;
 
   if (!isAuthenticated) {
     return (
@@ -405,13 +411,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleImportFile}
-        className="hidden"
-        accept="application/json"
-      />
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -442,6 +441,13 @@ export default function App() {
                      >
                        <UploadIcon className="w-4 h-4" />
                      </button>
+                     <input 
+                       type="file" 
+                       ref={fileInputRef} 
+                       onChange={handleImportFile} 
+                       className="hidden" 
+                       accept="application/json"
+                     />
                   </div>
 
                   <button 
@@ -525,12 +531,18 @@ export default function App() {
             {sortedStudents.length > 0 ? (
               <div className="flex flex-col gap-3">
                  {/* List Header (Hidden on mobile) */}
-                 <div className="hidden md:grid grid-cols-[72px_minmax(0,1fr)_150px_150px_110px_44px] gap-3 px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider items-center">
-                    <span className="text-center">No.</span>
-                    <span className="text-left">Student</span>
-                    <span className="text-center">Bonus</span>
-                    <span className="text-center">Minus</span>
-                    <span className="text-center">Total</span>
+                 <div className="hidden md:flex px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider items-center gap-4">
+                    <div className="flex-1 flex items-center gap-4">
+                      <span className="w-12 text-center">No.</span>
+                      <span>Student</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-6">
+                      <span className="w-[138px] text-center">Bonus</span>
+                      <span className="w-[138px] text-center">Minus</span>
+                      <span className="w-24 pl-4 text-center">Total</span>
+                    </div>
+                    <div className="w-[84px] text-center">Actions</div> 
                  </div>
 
                 {sortedStudents.map(student => (
@@ -540,6 +552,7 @@ export default function App() {
                     onUpdateBonus={(id, delta) => updateStudentPoints(id, 'bonus', delta)}
                     onUpdateMinus={(id, delta) => updateStudentPoints(id, 'minus', delta)}
                     onDelete={handleDeleteStudent}
+                    onEditNote={handleOpenNoteModal}
                   />
                 ))}
               </div>
@@ -674,6 +687,53 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Note Modal */}
+      {isNoteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-slate-800">
+                Student Notes
+                <span className="block text-sm font-normal text-slate-500 mt-1">
+                  For: {editingStudentName}
+                </span>
+              </h3>
+              <button onClick={() => setIsNoteModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <XIcon className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-700 mb-2">Notes</label>
+              <textarea
+                autoFocus
+                value={currentNote}
+                onChange={(e) => setCurrentNote(e.target.value)}
+                placeholder="Write observations, areas for improvement, or praise here..."
+                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all min-h-[200px] resize-y bg-white text-slate-900 placeholder:text-slate-400"
+              />
+            </div>
+            
+            <div className="flex justify-end gap-3">
+              <button 
+                type="button"
+                onClick={() => setIsNoteModalOpen(false)}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                type="button"
+                onClick={handleSaveNote}
+                className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+              >
+                Save Note
+              </button>
+            </div>
           </div>
         </div>
       )}

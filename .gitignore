@@ -22,9 +22,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-*.xlsx
-classtrack-backup-2025-11-28.json
-data.json
-output
-.playwright-cli

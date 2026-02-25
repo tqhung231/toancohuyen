@@ -4,6 +4,7 @@ export interface Student {
   name: string;
   bonus: number;
   minus: number;
+  note?: string;
 }
 
 export interface ClassGroup {
