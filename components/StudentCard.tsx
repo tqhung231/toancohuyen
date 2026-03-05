@@ -20,7 +20,6 @@ export const StudentCard: React.FC<StudentCardProps> = ({
   const netScore = student.bonus - student.minus;
   const isPositive = netScore > 0;
   const isNegative = netScore < 0;
-  const hasNote = student.note.trim().length > 0;
 
   return (
     <div className="group bg-white rounded-xl shadow-sm border border-slate-200 p-4 grid grid-cols-1 md:grid-cols-[72px_minmax(0,1fr)_150px_150px_110px_100px] gap-4 md:gap-3 md:items-center transition-all duration-200 hover:shadow-md hover:border-indigo-100">
@@ -101,13 +100,9 @@ export const StudentCard: React.FC<StudentCardProps> = ({
       <div className="col-span-full md:col-span-1 flex justify-end gap-1 md:justify-self-end">
         <button
           onClick={() => onEditNote(student.id)}
-          className={`p-2 rounded-full transition-colors ${
-            hasNote
-              ? 'text-indigo-500 bg-indigo-50 hover:text-indigo-600 hover:bg-indigo-100'
-              : 'text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'
-          }`}
-          title={hasNote ? 'View or Edit Note' : 'Add Note'}
-          aria-label={hasNote ? `View note for ${student.name}` : `Add note for ${student.name}`}
+          className="p-2 rounded-full transition-colors text-slate-300 hover:text-indigo-500 hover:bg-indigo-50"
+          title="Edit Note"
+          aria-label={`Edit note for ${student.name}`}
         >
           <FileTextIcon className="w-5 h-5" />
         </button>
